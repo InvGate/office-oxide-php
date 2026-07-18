@@ -17,6 +17,7 @@ crate-type = ["cdylib"]
 [dependencies]
 ext-php-rs = "0.15"
 office_oxide = "0.1"
+serde = "1"
 serde_json = "1"
 
 [profile.release]
