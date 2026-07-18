@@ -76,7 +76,9 @@ jobs:
         with:
           php-version: '8.4'
           tools: composer
-          extensions: none
+          # Composer + PHPUnit need these; without them `composer install` aborts
+          # ("iconv OR mbstring extension is required").
+          extensions: mbstring, dom, xml, xmlwriter, tokenizer
       - name: Assert PHP build is NTS
         run: php -v | grep -q 'NTS' || { echo "::error::expected an NTS PHP build, got:"; php -v; exit 1; }
       - name: Install clang (ext-php-rs bindgen)
@@ -115,6 +117,8 @@ jobs:
         with:
           php-version: '8.4'
           tools: composer
+          # Composer + PHPUnit need these extensions present.
+          extensions: mbstring, dom, xml, xmlwriter, tokenizer
       - uses: KyleMayes/install-llvm-action@v2
         with:
           version: "18.1"
