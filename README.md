@@ -18,6 +18,13 @@ echo $doc->toMarkdown();     // Markdown
 $meta = $doc->getMetadata(); // ['format' => 'docx', 'title' => ..., ...]
 $ir   = $doc->getIr();       // full structured tree as a nested array
 $json = $doc->toJson();      // the same tree, as a JSON string
+
+// Images: bytes are omitted from getIr()/toJson() by default (see below).
+foreach ($doc->getImages() as $img) {
+    // ['image_id' => 0, 'format' => 'png', 'data' => '<binary string>']
+    file_put_contents("img-{$img['image_id']}.{$img['format']}", $img['data']);
+}
+$doc->getImages('/tmp/imgs'); // or: write each to a dir, return paths instead
 ```
 
 ## Status
@@ -99,8 +106,20 @@ All methods live on `OfficeOxide\Document` and throw `OfficeOxide\OfficeExceptio
 | `$doc->toMarkdown()`                          | `string` | Markdown.                                              |
 | `$doc->getFormat()`                           | `string` | Detected format, e.g. `"docx"`.                        |
 | `$doc->getMetadata()`                         | `array`  | Title, author, subject, keywords, dates, format.       |
-| `$doc->getIr()`                               | `array`  | Full structured IR: `['metadata' => ..., 'sections' => ...]`. |
-| `$doc->toJson()`                              | `string` | The IR serialized as JSON.                             |
+| `$doc->getIr(bool $include_image_data = false)` | `array`  | Full structured IR: `['metadata' => ..., 'sections' => ...]`. Each image element carries an `image_id`; image bytes are omitted unless `$include_image_data` is `true` (then inlined as binary strings). |
+| `$doc->getImages(?string $output_dir = null)` | `array`  | Every embedded image, correlated to `getIr()` by `image_id`. Default: `['image_id', 'format', 'data']` with `data` a binary string. With `$output_dir`: writes each image there and returns `['image_id', 'format', 'path']` instead — bytes never all held in memory. |
+| `$doc->toJson(bool $include_image_data = false)` | `string` | The IR serialized as JSON. Mirrors `getIr()`; with `$include_image_data`, image bytes are base64-encoded (JSON can't hold raw bytes). |
+
+### Images
+
+Image bytes are a `Vec<u8>` in the source IR; materialising them into a PHP
+array would balloon each byte into a full zval (~16–32× expansion). So
+`getIr()`/`toJson()` **omit image bytes by default** and tag each image element
+with an ordinal `image_id`. Fetch the bytes on demand with `getImages()`
+(returned as compact PHP **binary strings**, correlated by `image_id`), or pass
+a directory to `getImages($dir)` to stream them to disk and get back paths —
+the memory-lean choice for image-heavy documents. See
+[docs/API.md](docs/API.md#image-bytes) for the full shape.
 
 ### Error handling
 
@@ -144,9 +163,12 @@ php -d extension="$PWD/target/release/liboffice_oxide_php.so" tests/php/smoke.ph
 
 `ext-php-rs` exposes a Rust struct to PHP as a class. `OfficeOxide\Document`
 wraps an `office_oxide::Document`; each method delegates to one upstream call.
-The structured IR is `serde`-serializable, so `getIr()`/`toJson()` serialize it
-once and (for the array form) walk the JSON value into native PHP arrays — a
-single conversion path instead of hand-mapping ~20 node types to PHP classes.
+The structured IR is `serde`-serializable, so `getIr()` runs it through a custom
+`serde` serializer that emits native PHP values (`Zval`s) directly — a single
+generic conversion path instead of hand-mapping ~20 node types to PHP classes,
+and without building an intermediate JSON tree. That same walk assigns each
+image an `image_id` and diverts its bytes to `getImages()` rather than inflating
+the array.
 
 ## Testing
 
