@@ -10,3 +10,8 @@
 
 # Local design notes (kept out of git by request)
 /docs/superpowers
+
+# Benchmark: composer deps, generated fixtures, and machine-specific results
+/bench/vendor
+/bench/fixtures
+/bench/results.json

@@ -25,6 +25,22 @@ $json = $doc->toJson();      // the same tree, as a JSON string
 Read-only. The extension exposes the document as plain text, HTML, Markdown, and
 a structured intermediate representation (IR). Writing/editing is not exposed.
 
+## Performance
+
+On DOCX text extraction, the extension is **50–170× faster** and uses **3.5–4×
+less memory** than [`phpoffice/phpword`](https://github.com/PHPOffice/PHPWord)
+(PHP 8.4 NTS, PHPWord 1.4). The gap widens with document size.
+
+| Paragraphs | Time — oxide | Time — PHPWord | Speedup | Mem/doc — oxide | Mem/doc — PHPWord | Mem saving |
+| ---------: | -----------: | -------------: | ------: | --------------: | ----------------: | ---------: |
+|      1,000 |     1.9 ms   |     228 ms     | ~119×   |      5.3 MiB    |      21.1 MiB     |   ~4.0×    |
+|     15,000 |    23.6 ms   |    3,963 ms    | ~168×   |     55.1 MiB    |     196.6 MiB     |   ~3.6×    |
+
+PHPWord builds a full mutable, writable document model; this extension is
+read-only, so they are not substitutes if you need to *edit* documents — the
+benchmark measures the read/extract path they share. Full methodology,
+caveats, and a reproducible harness are in [`bench/`](bench/README.md).
+
 ## Installation (prebuilt binaries)
 
 Each [GitHub Release](../../releases) ships prebuilt binaries built for
