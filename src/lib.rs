@@ -70,7 +70,8 @@ impl Document {
     pub fn from_string(data: Binary<u8>, format: String) -> PhpResult<Self> {
         let fmt = DocumentFormat::from_extension(&format)
             .ok_or_else(|| office_exception(format!("unsupported format: {format}")))?;
-        let bytes: Vec<u8> = data.to_vec();
+        // Move the owned buffer out of `Binary` rather than cloning it.
+        let bytes: Vec<u8> = data.into();
         let inner = OxideDocument::from_reader(std::io::Cursor::new(bytes), fmt)
             .map_err(office_exception)?;
         Ok(Self { inner })
