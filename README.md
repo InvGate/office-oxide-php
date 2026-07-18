@@ -148,12 +148,40 @@ The structured IR is `serde`-serializable, so `getIr()`/`toJson()` serialize it
 once and (for the array form) walk the JSON value into native PHP arrays — a
 single conversion path instead of hand-mapping ~20 node types to PHP classes.
 
+## Testing
+
+Rust-side quality is enforced by `cargo clippy -D warnings`, `cargo fmt`, and the
+supply-chain gate (`cargo audit`, `cargo deny`, `cargo machete`). The
+extension's *behaviour* is covered by a PHPUnit suite that runs against the
+compiled extension:
+
+```sh
+cargo build --release
+composer install
+php -d extension="$PWD/target/release/liboffice_oxide_php.so" vendor/bin/phpunit
+```
+
+A dependency-free smoke test is also available (no Composer required):
+
+```sh
+php -d extension="$PWD/target/release/liboffice_oxide_php.so" tests/php/smoke.php
+```
+
 ## Continuous integration
 
-- `.github/workflows/ci.yml` builds both platforms and runs the PHP smoke test
-  on every push and pull request.
-- `.github/workflows/release.yml` builds, verifies, packages, and attaches the
-  binaries to a GitHub Release whenever a `v*` tag is pushed.
+`.github/workflows/ci.yml` (on every push to `main` and every PR):
+
+- **`lint`** — `cargo fmt --check`, `cargo audit`, `cargo deny check`, `cargo machete`.
+- **`rust`** — `cargo test` and `cargo clippy --all-targets -D warnings`.
+- **`build-linux` / `build-windows`** — gated on `lint` + `rust`; build the
+  release extension, run the smoke test and the PHPUnit suite against it, and
+  upload the binary as an artifact.
+
+`.github/workflows/release.yml` (on a `v*` tag; `workflow_dispatch` runs a
+build-only dry run) builds and smoke-tests three binaries — Windows x64, Ubuntu
+(glibc ~2.39), and EL8 (glibc 2.28, for RHEL/Rocky/Alma 8 & 9) — asserts the tag
+matches the crate version, and publishes them to a GitHub Release alongside the
+IDE stubs.
 
 The workflows are the source of truth for the exact, reproducible build steps.
 

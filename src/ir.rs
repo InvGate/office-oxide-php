@@ -7,7 +7,7 @@
 //! the whole structured surface available to PHP with a single conversion path.
 
 use ext_php_rs::convert::IntoZval;
-use ext_php_rs::types::{Zval, ZendHashTable};
+use ext_php_rs::types::{ZendHashTable, Zval};
 use serde_json::Value;
 
 /// Recursively convert a `serde_json::Value` into a PHP `Zval`.

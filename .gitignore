@@ -4,9 +4,16 @@
 # Release staging
 /dist
 
+# PHP dev tooling (PHPUnit)
+/vendor
+/.phpunit.cache
+
 # Editor / OS noise
 *.swp
 .DS_Store
+
+# Claude Code local settings & worktrees
+/.claude
 
 # Local design notes (kept out of git by request)
 /docs/superpowers

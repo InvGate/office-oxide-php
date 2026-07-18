@@ -1,74 +1,138 @@
-name: CI
+name: ci
 
+# Gate jobs (rust, lint) run first and BLOCK the build jobs (needs:). The build jobs
+# compile the extension and run the PHPUnit suite against it — the functional tests
+# need a real loaded extension, so they live where the binary exists.
+# Windows uses nightly Rust (ext-php-rs abi_vectorcall). push runs only on main and
+# release tags; feature-branch pushes are covered by their pull_request run.
+# `concurrency` cancels a superseded run when you push again over an in-flight one.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
-  workflow_dispatch:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x86_64
-            os: ubuntu-latest
-            # ext-php-rs builds on stable for Linux.
-            rust: stable
-            ext: target/release/liboffice_oxide_php.so
-          - name: windows-x64
-            os: windows-latest
-            # Windows requires nightly for the `abi_vectorcall` feature.
-            rust: nightly
-            ext: target/release/office_oxide_php.dll
-
+  rust:
+    name: Rust tests + clippy (stable, PHP 8.4 NTS)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # PHP 8.4, non-thread-safe. Provides php, phpize and php-config so
-      # ext-php-rs can locate the PHP headers to build against.
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+      # cargo test / clippy --all-targets compile the extension, whose ext-php-rs bindgen
+      # step links against PHP internals — so PHP dev headers + clang are required to test.
+      - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.4"
-        env:
-          phpts: nts
-
-      # libclang is required by ext-php-rs's bindgen step.
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@v2
+          php-version: '8.4'
+          tools: none
+          extensions: none
+      - name: Assert PHP build is NTS
+        run: php -v | grep -q 'NTS' || { echo "::error::expected an NTS PHP build, got:"; php -v; exit 1; }
+      - name: Install clang (ext-php-rs bindgen)
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          version: "17"
-          directory: ${{ runner.temp }}/llvm
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings
 
-      - name: Export libclang path
-        shell: bash
-        run: echo "LIBCLANG_PATH=${{ runner.temp }}/llvm/lib" >> "$GITHUB_ENV"
-
-      - name: Install Rust (${{ matrix.rust }})
-        uses: dtolnay/rust-toolchain@master
+  lint:
+    name: Lint & supply-chain (fmt, audit, deny, machete)
+    runs-on: ubuntu-latest
+    # Lightweight: fmt reads source; audit/deny read Cargo.lock; machete parses manifests.
+    # None need clang or PHP (clippy runs against a real compile in the `rust` job).
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.rust }}
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build (release)
-        run: cargo build --release
-
-      - name: Run PHP smoke test
-        shell: bash
-        run: php -d extension="$PWD/${{ matrix.ext }}" tests/php/smoke.php
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+          components: rustfmt
+      - run: cargo fmt --all --check
+      - name: Install cargo-audit, cargo-deny, cargo-machete
+        uses: taiki-e/install-action@v2
         with:
-          name: office_oxide_php-${{ matrix.name }}-php8.4-nts
-          path: ${{ matrix.ext }}
+          tool: cargo-audit,cargo-deny,cargo-machete
+      - run: cargo audit
+      - run: cargo deny check
+      - run: cargo machete
+
+  build-linux:
+    name: Build + PHPUnit (Linux, PHP 8.4 NTS)
+    runs-on: ubuntu-latest
+    needs: [rust, lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer
+          extensions: none
+      - name: Assert PHP build is NTS
+        run: php -v | grep -q 'NTS' || { echo "::error::expected an NTS PHP build, got:"; php -v; exit 1; }
+      - name: Install clang (ext-php-rs bindgen)
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Smoke test (extension loads + reads a fixture)
+        run: php -d extension="$(pwd)/target/release/liboffice_oxide_php.so" tests/php/smoke.php
+      - name: Install PHP dev dependencies
+        run: composer install --no-interaction --no-progress
+      - name: PHPUnit (extension loaded)
+        run: php -d extension="$(pwd)/target/release/liboffice_oxide_php.so" vendor/bin/phpunit
+      - name: Stage Linux artifact
+        run: |
+          mkdir -p dist/linux
+          cp target/release/liboffice_oxide_php.so dist/linux/office_oxide_php.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: office_oxide_php-linux-x64-php84nts
+          path: dist/linux/*
+          if-no-files-found: error
+
+  build-windows:
+    name: Build + PHPUnit (Windows, nightly, PHP 8.4 NTS)
+    runs-on: windows-latest
+    needs: [rust, lint]
+    # RUSTUP_TOOLCHAIN takes precedence over rust-toolchain.toml (which pins stable);
+    # ext-php-rs needs nightly on Windows for abi_vectorcall.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer
+      - uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "18.1"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Smoke test (extension loads + reads a fixture)
+        run: php -d extension="${{ github.workspace }}\target\release\office_oxide_php.dll" tests\php\smoke.php
+      - name: Install PHP dev dependencies
+        run: composer install --no-interaction --no-progress
+      - name: PHPUnit (extension loaded)
+        run: php -d extension="${{ github.workspace }}\target\release\office_oxide_php.dll" vendor\bin\phpunit
+      - name: Stage Windows artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
+          Copy-Item target\release\office_oxide_php.dll dist\windows\office_oxide_php.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: office_oxide_php-windows-x64-php84nts
+          path: dist/windows/*
           if-no-files-found: error

@@ -71,8 +71,8 @@ impl Document {
         let fmt = DocumentFormat::from_extension(&format)
             .ok_or_else(|| office_exception(format!("unsupported format: {format}")))?;
         let bytes: Vec<u8> = data.to_vec();
-        let inner =
-            OxideDocument::from_reader(std::io::Cursor::new(bytes), fmt).map_err(office_exception)?;
+        let inner = OxideDocument::from_reader(std::io::Cursor::new(bytes), fmt)
+            .map_err(office_exception)?;
         Ok(Self { inner })
     }
 

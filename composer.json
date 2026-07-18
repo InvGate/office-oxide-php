@@ -1,0 +1,21 @@
+{
+    "name": "invgate/office-oxide-php",
+    "description": "PHP extension to read DOCX, DOC, XLSX, XLS, PPTX and PPT files, wrapping the office_oxide Rust crate.",
+    "type": "php-ext",
+    "license": "MIT OR Apache-2.0",
+    "keywords": ["office", "docx", "doc", "xlsx", "pptx", "reader", "extension"],
+    "require": {
+        "php": ">=8.4"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "OfficeOxide\\Tests\\": "tests/php/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}

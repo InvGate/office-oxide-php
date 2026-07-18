@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         failOnWarning="true"
+         failOnNotice="true"
+         cacheDirectory=".phpunit.cache">
+    <testsuites>
+        <testsuite name="office_oxide_php">
+            <directory>tests/php</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <!-- Location of a fixture directory, overridable in CI. -->
+        <const name="OFFICE_OXIDE_FIXTURES" value="tests/fixtures"/>
+    </php>
+</phpunit>
