@@ -1,0 +1,96 @@
+name: Release
+
+# Build prebuilt extension binaries and attach them to the GitHub Release when
+# a version tag (e.g. v0.1.0) is pushed.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            rust: stable
+            ext: target/release/liboffice_oxide_php.so
+            asset: office_oxide_php.so
+          - name: windows-x64
+            os: windows-latest
+            rust: nightly
+            ext: target/release/office_oxide_php.dll
+            asset: office_oxide_php.dll
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+        env:
+          phpts: nts
+
+      - name: Install LLVM
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "17"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: Export libclang path
+        shell: bash
+        run: echo "LIBCLANG_PATH=${{ runner.temp }}/llvm/lib" >> "$GITHUB_ENV"
+
+      - name: Install Rust (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Verify with PHP smoke test
+        shell: bash
+        run: php -d extension="$PWD/${{ matrix.ext }}" tests/php/smoke.php
+
+      # Assemble a release package: the binary, the IDE stubs, and the docs.
+      - name: Stage package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "${{ matrix.ext }}" "dist/${{ matrix.asset }}"
+          cp office_oxide_php.stubs.php dist/
+          cp README.md LICENSE-MIT LICENSE-APACHE dist/
+
+      - name: Create archive
+        shell: bash
+        run: |
+          cd dist
+          base="office_oxide_php-${GITHUB_REF_NAME}-${{ matrix.name }}-php8.4-nts"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "../${base}.zip" ./*
+          else
+            tar -czf "../${base}.tar.gz" ./*
+          fi
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            office_oxide_php-*.tar.gz
+            office_oxide_php-*.zip
+          fail_on_unmatched_files: false

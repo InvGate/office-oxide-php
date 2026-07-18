@@ -1,0 +1,27 @@
+[package]
+name = "office_oxide_php"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "PHP extension to read DOCX, DOC, XLSX, XLS, PPTX, and PPT files, wrapping the office_oxide Rust crate."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/federicomartinez/php-office-oxide"
+readme = "README.md"
+keywords = ["php", "office", "docx", "doc", "extension"]
+categories = ["parser-implementations", "text-processing"]
+
+[lib]
+name = "office_oxide_php"
+crate-type = ["cdylib"]
+
+[dependencies]
+ext-php-rs = "0.15"
+office_oxide = "0.1"
+serde_json = "1"
+
+[profile.release]
+# Extensions load into a long-running PHP process; optimize for speed and size.
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

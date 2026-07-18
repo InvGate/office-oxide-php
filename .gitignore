@@ -1,0 +1,12 @@
+# Rust build output
+/target
+
+# Release staging
+/dist
+
+# Editor / OS noise
+*.swp
+.DS_Store
+
+# Local design notes (kept out of git by request)
+/docs/superpowers
