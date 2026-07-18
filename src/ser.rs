@@ -74,6 +74,9 @@ pub struct Context {
     pub inline_image_data: bool,
     /// How `getImages()` wants each image's bytes materialised.
     pub sink: ImageSink,
+    /// Current nesting depth, maintained by [`serialize_child`] to enforce
+    /// [`MAX_DEPTH`] against pathologically nested untrusted input.
+    depth: usize,
 }
 
 impl Context {
@@ -85,6 +88,7 @@ impl Context {
             images: Vec::new(),
             inline_image_data,
             sink: ImageSink::None,
+            depth: 0,
         }
     }
 
@@ -99,6 +103,7 @@ impl Context {
                 Some(dir) => ImageSink::Directory(dir),
                 None => ImageSink::Binary,
             },
+            depth: 0,
         }
     }
 
@@ -109,10 +114,34 @@ impl Context {
     }
 }
 
+/// Maximum nesting depth converted from the IR into PHP values.
+///
+/// The IR is derived from untrusted documents, and this conversion recurses on
+/// the PHP request thread's stack — unlike `office_oxide`'s *parsing*, which
+/// runs on a dedicated large-stack thread. Capping the depth turns a potential
+/// stack-overflow crash (an uncatchable `SIGSEGV` that takes down the PHP
+/// worker) on pathologically nested input into a bounded truncation. Real
+/// Office documents nest far shallower than this.
+const MAX_DEPTH: usize = 256;
+
 /// Serialize any `Serialize` value into a `Zval`, collecting image bytes into
 /// `ctx`.
 pub fn to_zval<T: Serialize>(value: &T, ctx: &mut Context) -> Result<Zval, SerError> {
-    value.serialize(ZvalSerializer { ctx })
+    serialize_child(ctx, value)
+}
+
+/// Serialize one (possibly nested) value, enforcing [`MAX_DEPTH`]. Beyond the
+/// cap the value is truncated to `null`, so deeply nested untrusted input can
+/// never overflow the stack. Depth is tracked on `ctx` and always restored,
+/// including on error.
+fn serialize_child<T: ?Sized + Serialize>(ctx: &mut Context, value: &T) -> Result<Zval, SerError> {
+    if ctx.depth >= MAX_DEPTH {
+        return Ok(null_zval());
+    }
+    ctx.depth += 1;
+    let result = value.serialize(ZvalSerializer { ctx: &mut *ctx });
+    ctx.depth -= 1;
+    result
 }
 
 /// Error type for the `Zval` serializer.
@@ -150,6 +179,17 @@ fn ht_into_zval(ht: ext_php_rs::boxed::ZBox<ZendHashTable>) -> Zval {
 fn binary_string_zval(bytes: &[u8]) -> Zval {
     let mut z = Zval::new();
     z.set_zend_string(ZendStr::new(bytes, false));
+    z
+}
+
+/// Build a (UTF-8) PHP string `Zval`. `set_string` can only fail on allocation
+/// failure, which PHP treats as fatal anyway; fall back to null so we never
+/// return an undefined zval.
+pub fn string_zval(s: &str) -> Zval {
+    let mut z = Zval::new();
+    if z.set_string(s, false).is_err() {
+        z.set_null();
+    }
     z
 }
 
@@ -223,15 +263,11 @@ impl<'a> Serializer for ZvalSerializer<'a> {
     }
 
     fn serialize_char(self, v: char) -> Result<Zval, SerError> {
-        let mut z = Zval::new();
-        let _ = z.set_string(&v.to_string(), false);
-        Ok(z)
+        Ok(string_zval(&v.to_string()))
     }
 
     fn serialize_str(self, v: &str) -> Result<Zval, SerError> {
-        let mut z = Zval::new();
-        let _ = z.set_string(v, false);
-        Ok(z)
+        Ok(string_zval(v))
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Zval, SerError> {
@@ -280,7 +316,7 @@ impl<'a> Serializer for ZvalSerializer<'a> {
         value: &T,
     ) -> Result<Zval, SerError> {
         // Externally-tagged newtype variant → { variant: value }.
-        let inner = value.serialize(ZvalSerializer { ctx: self.ctx })?;
+        let inner = serialize_child(self.ctx, value)?;
         let mut ht = ZendHashTable::new();
         let _ = ht.insert(variant, inner);
         Ok(ht_into_zval(ht))
@@ -378,7 +414,7 @@ impl<'a> SerializeSeq for SeqSer<'a> {
     type Ok = Zval;
     type Error = SerError;
     fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), SerError> {
-        let z = value.serialize(ZvalSerializer { ctx: self.ctx })?;
+        let z = serialize_child(self.ctx, value)?;
         let _ = self.ht.push(z);
         Ok(())
     }
@@ -420,7 +456,7 @@ impl<'a> SerializeTupleVariant for TupleVariantSer<'a> {
     type Ok = Zval;
     type Error = SerError;
     fn serialize_field<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), SerError> {
-        let z = value.serialize(ZvalSerializer { ctx: self.ctx })?;
+        let z = serialize_child(self.ctx, value)?;
         let _ = self.ht.push(z);
         Ok(())
     }
@@ -447,7 +483,7 @@ impl<'a> SerializeMap for MapSer<'a> {
         Ok(())
     }
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), SerError> {
-        let z = value.serialize(ZvalSerializer { ctx: self.ctx })?;
+        let z = serialize_child(self.ctx, value)?;
         let key = self.pending_key.take().unwrap_or_default();
         let _ = self.ht.insert(key.as_str(), z);
         Ok(())
@@ -501,18 +537,14 @@ impl<'a> SerializeStruct for StructSer<'a> {
             // the tree.
             let fmt = value.serialize(StringCapture)?;
             let z = match &fmt {
-                Some(s) => {
-                    let mut z = Zval::new();
-                    let _ = z.set_string(s, false);
-                    z
-                }
+                Some(s) => string_zval(s),
                 None => null_zval(),
             };
             let _ = self.ht.insert("format", z);
             self.img_format = fmt;
             return Ok(());
         }
-        let z = value.serialize(ZvalSerializer { ctx: self.ctx })?;
+        let z = serialize_child(self.ctx, value)?;
         let _ = self.ht.insert(key, z);
         Ok(())
     }
@@ -536,9 +568,7 @@ impl<'a> SerializeStruct for StructSer<'a> {
                         );
                         std::fs::write(&path, bytes)
                             .map_err(|e| SerError(format!("cannot write {path}: {e}")))?;
-                        let mut z = Zval::new();
-                        let _ = z.set_string(&path, false);
-                        Some(z)
+                        Some(string_zval(&path))
                     }
                     None => None,
                 },
@@ -568,7 +598,7 @@ impl<'a> SerializeStructVariant for StructVariantSer<'a> {
         key: &'static str,
         value: &T,
     ) -> Result<(), SerError> {
-        let z = value.serialize(ZvalSerializer { ctx: self.ctx })?;
+        let z = serialize_child(self.ctx, value)?;
         let _ = self.ht.insert(key, z);
         Ok(())
     }

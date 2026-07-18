@@ -71,7 +71,8 @@ impl Document {
     pub fn from_string(data: Binary<u8>, format: String) -> PhpResult<Self> {
         let fmt = DocumentFormat::from_extension(&format)
             .ok_or_else(|| office_exception(format!("unsupported format: {format}")))?;
-        let bytes: Vec<u8> = data.to_vec();
+        // Move the owned buffer out of `Binary` rather than cloning it.
+        let bytes: Vec<u8> = data.into();
         let inner = OxideDocument::from_reader(std::io::Cursor::new(bytes), fmt)
             .map_err(office_exception)?;
         Ok(Self { inner })
@@ -160,13 +161,10 @@ impl Document {
             id_z.set_long(img.id);
             let _ = entry.insert("image_id", id_z);
 
-            let mut fmt_z = Zval::new();
-            match &img.format {
-                Some(s) => {
-                    let _ = fmt_z.set_string(s, false);
-                }
-                None => fmt_z.set_null(),
-            }
+            let fmt_z = match &img.format {
+                Some(s) => ser::string_zval(s),
+                None => ser::null_zval(),
+            };
             let _ = entry.insert("format", fmt_z);
 
             // `value` is the pre-built binary string (default) or path string
