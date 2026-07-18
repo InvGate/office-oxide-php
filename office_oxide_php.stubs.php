@@ -78,18 +78,51 @@ class Document
      * The full structured intermediate representation as a nested array,
      * shaped like `['metadata' => [...], 'sections' => [...]]`.
      *
+     * Each image element carries an ordinal `image_id` (document order). Image
+     * bytes are omitted by default to avoid a large memory blow-up; fetch them
+     * with {@see Document::getImages()} (correlated by `image_id`). Pass
+     * `$include_image_data = true` to inline the bytes as PHP binary strings.
+     *
+     * @param bool $include_image_data Inline image bytes as binary strings.
      * @return array<string, mixed>
      */
-    public function getIr(): array {}
+    public function getIr(bool $include_image_data = false): array {}
+
+    /**
+     * Every embedded image, as a list of associative arrays.
+     *
+     * Without $output_dir, each entry is
+     * `['image_id' => int, 'format' => ?string, 'data' => ?string]` where
+     * `data` is a raw PHP binary string (or null when no bytes were extracted).
+     *
+     * With $output_dir, each image is written to
+     * `{$output_dir}/image_{image_id}.{ext}` and the entry becomes
+     * `['image_id' => int, 'format' => ?string, 'path' => ?string]` instead —
+     * so the caller never holds all image bytes in PHP memory at once. The
+     * directory is created if missing.
+     *
+     * `image_id` matches the value on the corresponding element in getIr().
+     *
+     * @param string|null $output_dir Directory to write images into; when given,
+     *                                entries carry `path` instead of `data`.
+     * @return array<int, array<string, mixed>>
+     * @throws OfficeException If an image cannot be written to $output_dir.
+     */
+    public function getImages(?string $output_dir = null): array {}
 
     /**
      * The full structured intermediate representation serialized as a JSON
      * string. Equivalent to json_encode($doc->getIr()) but produced directly
      * by the native core.
      *
+     * Mirrors getIr(): image elements carry `image_id` and image bytes are
+     * omitted by default. Because JSON cannot hold raw bytes, passing
+     * `$include_image_data = true` encodes them as base64 strings.
+     *
+     * @param bool $include_image_data Encode image bytes as base64 in the JSON.
      * @return string
      */
-    public function toJson(): string {}
+    public function toJson(bool $include_image_data = false): string {}
 }
 
 /**

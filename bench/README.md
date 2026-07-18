@@ -1,7 +1,11 @@
 # Benchmark: office_oxide_php vs phpoffice/phpword
 
 Compares this extension against [`phpoffice/phpword`](https://github.com/PHPOffice/PHPWord)
-on the most common real task: **load a DOCX and extract all its text**.
+on two real tasks:
+
+1. **Text extraction** — load a DOCX and extract all its text.
+2. **Image extraction** — load a DOCX and pull out every embedded image's raw
+   bytes.
 
 ## Methodology
 
@@ -24,6 +28,19 @@ on the most common real task: **load a DOCX and extract all its text**.
   (`hrtime`); we report the mean and the min.
 - Both engines extract the same text to within 2% (`text-length ratio ≈ 0.98`;
   the difference is newline handling), confirming an apples-to-apples workload.
+
+### Image workload
+
+- **Fixtures both engines read.** `gen_image_fixtures.php` hand-assembles DOCX
+  files with modern **DrawingML** inline images (5/25/100 copies of a ~37 KiB
+  PNG). PHPWord *writes* legacy VML images, which office_oxide does not read
+  back, so the fixtures are built directly rather than via PHPWord — both
+  engines then extract the identical media.
+- **Identical bytes, both retained.** office_oxide returns every image via
+  `getImages()` (all bytes in one array); the PHPWord side collects every
+  `Image::getImageString()` into an array too, so both hold **all** image bytes
+  at once. The runner asserts the two byte totals are equal (`MATCH, fair
+  comparison`) — if they ever diverge the comparison is flagged, not hidden.
 
 ## Running it
 
@@ -62,6 +79,41 @@ extension. Your absolute numbers will vary by machine; the *ratios* are the poin
   (`memory_get_peak_usage`) stays tiny (single-digit MiB) even on the largest
   file, where PHPWord needs ~140 MiB of Zend-allocator memory — relevant if you
   run close to `memory_limit`.
+
+### Image extraction
+
+Same environment; both engines extract and retain the identical image bytes.
+
+| Images | File size | Time — oxide | Time — PHPWord | **Speedup** | Mem/doc — oxide | Mem/doc — PHPWord |
+| -----: | --------: | -----------: | -------------: | ----------: | --------------: | ----------------: |
+|      5 | 176 KiB   |    1.02 ms   |     2.84 ms    |   **~2.8×** |     2.0 MiB     |     1.9 MiB       |
+|     25 | 876 KiB   |    4.16 ms   |    12.42 ms    |   **~3.0×** |     4.4 MiB     |     3.1 MiB       |
+|    100 | 3.4 MiB   |   14.89 ms   |    53.68 ms    |   **~3.6×** |    13.2 MiB     |     6.7 MiB       |
+
+- **Time: ~2.8–3.6× faster.** A smaller lead than text extraction — decoding
+  image containers is a thinner slice of the work, and PHPWord's image path
+  (extract-to-tempfile + `fread`) is comparatively cheap.
+- **Memory: office_oxide uses *somewhat more* here, not less.** To return
+  `getImages()` it parses the whole document into its Rust IR (which itself holds
+  the media, and re-clones it on each `to_ir()` call — an office_oxide-internal
+  duplication) and then emits each image as a PHP binary string. The binding
+  builds each string as it walks and drops the raw bytes immediately, so it never
+  holds every image's `Vec<u8>` at once; the remaining overhead is mostly
+  upstream. This is the honest trade-off: unlike text extraction, bulk image
+  extraction is not a memory win.
+- **Use `getImages($dir)` for the memory-lean path.** Writing images to a
+  directory and returning file paths keeps the bytes out of the PHP array
+  entirely, so the caller never holds them all at once — the right choice for
+  image-heavy documents. Measured (both engines stream each image to disk):
+
+  | Images | Time — oxide | Time — PHPWord | **Speedup** | Mem/doc — oxide | Mem/doc — PHPWord |
+  | -----: | -----------: | -------------: | ----------: | --------------: | ----------------: |
+  |      5 |    1.06 ms   |     2.60 ms    |   **~2.5×** |     1.6 MiB     |     1.6 MiB       |
+  |     25 |    4.82 ms   |    13.58 ms    |   **~2.8×** |     2.9 MiB     |     2.0 MiB       |
+  |    100 |   18.97 ms   |    55.30 ms    |   **~2.9×** |     9.5 MiB     |     3.2 MiB       |
+
+  Directory mode cuts office_oxide's 100-image footprint from 13.2 → 9.5 MiB
+  (the PHP binary-string array is never built), while staying ~3× faster.
 
 ## Caveats & fairness notes
 

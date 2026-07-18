@@ -135,13 +135,19 @@ echo $meta['title'] ?? '(untitled)';
 ### `Document::getIr`
 
 ```php
-public function getIr(): array
+public function getIr(bool $include_image_data = false): array
 ```
 
 The full structured **intermediate representation (IR)** as a nested PHP array,
 shaped as `['metadata' => [...], 'sections' => [...]]`. This is the richest view
 of the document: block structure, inline runs, tables, lists, images, and
 formatting. See [IR shape](#ir-shape).
+
+Each image element carries an ordinal `image_id` (document order). **Image bytes
+are omitted by default** — see [Image bytes](#image-bytes) for why — so fetch
+them with [`getImages()`](#documentgetimages), correlated by `image_id`. Pass
+`$include_image_data = true` to inline the bytes directly, as PHP **binary
+strings**.
 
 ```php
 $ir = $doc->getIr();
@@ -152,15 +158,53 @@ foreach ($ir['sections'] as $section) {
 }
 ```
 
+### `Document::getImages`
+
+```php
+public function getImages(?string $output_dir = null): array
+```
+
+Every embedded image, as a list of associative arrays.
+
+Without `$output_dir`, each entry is
+`['image_id' => int, 'format' => ?string, 'data' => ?string]`, where `data` is a
+raw PHP **binary string** (or `null` when the source carried no extractable
+bytes). `image_id` matches the value on the corresponding element in
+[`getIr()`](#documentgetir).
+
+```php
+foreach ($doc->getImages() as $img) {
+    file_put_contents("img-{$img['image_id']}.{$img['format']}", $img['data']);
+}
+```
+
+With `$output_dir`, each image is written to
+`{$output_dir}/image_{image_id}.{ext}` and the entry carries `path` instead of
+`data` — so the caller never holds all image bytes in PHP memory at once. The
+directory is created if missing; `path` is `null` for images with no bytes.
+
+```php
+foreach ($doc->getImages('/tmp/report-images') as $img) {
+    echo "{$img['image_id']} -> {$img['path']}\n";
+}
+```
+
+Throws `OfficeException` if an image cannot be written to `$output_dir`.
+
 ### `Document::toJson`
 
 ```php
-public function toJson(): string
+public function toJson(bool $include_image_data = false): string
 ```
 
 The same IR as [`getIr()`](#documentgetir), serialized to a JSON string by the
 native core. Equivalent in content to `json_encode($doc->getIr())`, but produced
 directly (handy for caching, logging, or forwarding to another service).
+
+Mirrors `getIr()`: image elements carry `image_id` and image bytes are omitted
+by default. Because JSON cannot hold raw bytes, `$include_image_data = true`
+encodes them as **base64** strings (not the binary strings the array methods
+return).
 
 ```php
 file_put_contents('report.ir.json', $doc->toJson());
@@ -267,7 +311,7 @@ and handle unknown types defensively — the set is open and may grow in future
 | `heading`         | A heading                        | `level` (1–6), `content` (inline[])                      |
 | `table`           | A table                          | `rows`, `column_widths_twips`, `border`, `caption`       |
 | `list`            | An ordered/unordered list        | `ordered` (bool), `items`, `start_number`, `level`       |
-| `image`           | An embedded image                | `alt_text`, `data`, `format`, `display_*_emu`, `pixel_*` |
+| `image`           | An embedded image                | `image_id`, `alt_text`, `format`, `display_*_emu`, `pixel_*` (`data` only when opted in — see [Image bytes](#image-bytes)) |
 | `code_block`      | Preformatted code                | text content                                             |
 | `thematic_break`  | Horizontal rule                  | — (no payload)                                            |
 | `page_break`      | Hard page break                  | — (no payload)                                            |
@@ -290,11 +334,24 @@ where `content` is itself an array of block-level **elements** (cells can contai
 paragraphs, nested tables, etc.). A **list** `item` is
 `{ content: Element[], nested: ?List }`.
 
-> **Image bytes.** When present, an image element's `data` is the raw bytes
-> serialized as a **JSON/PHP array of integers** (0–255), and `format` names the
-> encoding (e.g. `"png"`). For image-heavy documents this can make `getIr()` /
-> `toJson()` large — if you only need text or structure, prefer `getText()` or
-> ignore `image` elements.
+##### Image bytes
+
+Every image element carries an ordinal **`image_id`** (assigned in document
+order) and lightweight geometry (`format`, `display_*_emu`, `pixel_*`,
+`alt_text`). Its raw **bytes are omitted by default**, because materialising
+them into a PHP array is expensive: bytes would land as an array of integers
+(0–255), one full ~16-byte zval per byte — a ~16–32× blow-up that can turn a few
+MB of images into hundreds of MB of PHP memory.
+
+Instead, fetch bytes on demand, correlated by `image_id`:
+
+- **[`getImages()`](#documentgetimages)** — returns each image's bytes as a PHP
+  **binary string** (~1 byte/char), or writes them to a directory and returns
+  file paths (so nothing large stays in PHP memory).
+- **`getIr(true)` / `toJson(true)`** — inline the bytes into the tree, as binary
+  strings and base64 respectively.
+
+If you only need text or structure, you never pay for image bytes at all.
 
 #### Worked example
 
