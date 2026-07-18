@@ -104,7 +104,11 @@ jobs:
 
   build-windows:
     name: Build + PHPUnit (Windows, nightly, PHP 8.4 NTS)
-    runs-on: windows-latest
+    # Pin to windows-2022: its MSVC toolset (14.4x) matches the one PHP 8.4 NTS
+    # is built with. windows-latest (windows-2025) ships MSVC 14.5x, and PHP
+    # then refuses to load the DLL ("linked with 14.51, but the core is linked
+    # with 14.44").
+    runs-on: windows-2022
     needs: [rust, lint]
     # RUSTUP_TOOLCHAIN takes precedence over rust-toolchain.toml (which pins stable);
     # ext-php-rs needs nightly on Windows for abi_vectorcall.
