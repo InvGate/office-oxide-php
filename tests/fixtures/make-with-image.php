@@ -28,6 +28,11 @@ imagepng($im);
 $imgBytes = (string) ob_get_clean();
 imagedestroy($im);
 
+// Also emit the raw PNG as a standalone fixture, so tests can assert
+// byte-exactness via file_get_contents() without needing the zip extension
+// (which is not enabled in every CI PHP build).
+file_put_contents($dir . '/with-image.png', $imgBytes);
+
 $contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
     . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'

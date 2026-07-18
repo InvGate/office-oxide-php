@@ -20,7 +20,8 @@ final class ImageTest extends TestCase
 {
     private string $docx;
 
-    /** The exact PNG bytes embedded in the fixture, read from its own zip. */
+    /** The exact PNG bytes embedded in the fixture (committed as a sibling file
+     *  so tests need no zip extension — see tests/fixtures/make-with-image.php). */
     private string $expectedPng;
 
     protected function setUp(): void
@@ -35,11 +36,8 @@ final class ImageTest extends TestCase
         $this->docx = $dir . '/with-image.docx';
         self::assertFileExists($this->docx, 'fixture with-image.docx missing');
 
-        $zip = new \ZipArchive();
-        self::assertTrue($zip->open($this->docx) === true, 'cannot open fixture zip');
-        $png = $zip->getFromName('word/media/image1.png');
-        $zip->close();
-        self::assertIsString($png, 'fixture is missing its embedded PNG');
+        $png = @file_get_contents($dir . '/with-image.png');
+        self::assertIsString($png, 'fixture with-image.png missing');
         $this->expectedPng = $png;
     }
 
